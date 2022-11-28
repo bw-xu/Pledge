@@ -70,6 +70,8 @@ class Pledge:
     def _set_result(self, result):
         if result is not None:
             self._state = State.FULLFILLED
+            if not isinstance(result, tuple):
+                result = (result, )
         self._result = result
     
     def _set_error(self, error):
@@ -117,20 +119,28 @@ class Pledge:
                     self._reject(error)
                 finally:
                     self.is_handling = False
-        
-    
+
+
     def _fullfill(self, *ret):
         self._state = State.FULLFILLED
         for pledge in self._on_fulfillment:
             pledge._execute(*ret)
-    
+
+
     def _reject(self, error):
         self._state = State.REJECTED
         for pledge in self._on_rejection:
             pledge._execute(error)
 
+
     def apply(self, *args, **kwargs):
-        self._execute(*args, **kwargs)
+        if self._func is not None:
+            self._execute(*args, **kwargs)
+        elif self._result is not None:
+            self._fullfill(*self._result)
+        elif self._error is not None:
+            self._reject(self._error)
+
 
     def then(self, on_fulfillment=None, on_rejection=None):
         """
@@ -143,7 +153,7 @@ class Pledge:
             self._on_fulfillment.append(pledge)
 
         return pledge
-    
+
 
     def catch(self, on_rejected):
         return self.then(None, on_rejected)
