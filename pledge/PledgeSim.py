@@ -1,4 +1,4 @@
-from ....AscellaQRIS.Scheduler.Offline.LoopOffline import LoopOffline as Loop
+from ...Offline.LoopOffline import LoopOffline as Loop
 from functools import partial, wraps
 import inspect
 from .FutureSim import Future
@@ -28,10 +28,10 @@ class Pledge:
     ''''''
 
     def __init__(self, func=None, *args, loop=None):
-        self.future = Future()
         self.func = func
         self.args = args
         self._loop = loop if loop is not None else _loop
+        self.future = Future(loop=self._loop)
 
     def go(self):
         self.func(*self.args)
@@ -308,15 +308,15 @@ class Pledge:
     
 
 
-def pledgify(func):
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        try:
-            result = func(*args, **kwargs)
-        except BaseException as error:
-            return Pledge.reject(error)
-        if inspect.iscoroutine(result):
-            result = _loop.async_call(result)
-        return Pledge.resolve(result)
+# def pledgify(func):
+#     @wraps(func)
+#     def wrapper(*args, **kwargs):
+#         try:
+#             result = func(*args, **kwargs)
+#         except BaseException as error:
+#             return Pledge.reject(error)
+#         if inspect.iscoroutine(result):
+#             result = _loop.async_call(result)
+#         return Pledge.resolve(result)
 
-    return wrapper
+#     return wrapper

@@ -65,6 +65,8 @@ class Pledge:
         provided.
         """
         pledge = Pledge()
+        if on_resolved is not None: on_resolved = pledgify(on_resolved)
+        if on_rejected is not None: on_rejected = pledgify(on_rejected)
         self.future.add_done_callback(
             partial(self._handle_done, on_resolved, on_rejected, pledge)
         )
@@ -322,7 +324,7 @@ def pledgify(func):
         except BaseException as error:
             return Pledge.reject(error)
         if inspect.iscoroutine(result):
-            result = asyncio.create_task(result)
+            result = asyncio.get_event_loop().create_task(result)
         return Pledge.resolve(result)
 
     return wrapper
