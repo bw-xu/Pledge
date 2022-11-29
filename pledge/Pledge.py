@@ -2,7 +2,7 @@ import asyncio
 from functools import partial, wraps
 import inspect
 from asyncio import Future, Task
-
+asyncio.Event
 # from AscellaQRIS.Scheduler.Loop import Loop
 
 

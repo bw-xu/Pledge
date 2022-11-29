@@ -1,10 +1,9 @@
-from ...Offline.LoopOffline import LoopOffline as Loop, Task
+from ...Offline.LoopOffline import LoopOffline as Loop, Event
 from functools import partial, wraps
 import inspect
-from ...Offline.Future import Future
-import enum
 from typing import Callable
 from typing import List
+from .state import State
 
 _loop: Loop = Loop()
 
@@ -26,30 +25,6 @@ class AggregateError(RuntimeError):
     def __init__(self, errors):
         self.errors = errors
 
-class State(enum.IntEnum):
-    PENDING = -1
-    FULLFILLED = 0
-    REJECTED = 1
-
-    @property
-    def pedning(self):
-        return self is State.PENDING
-
-    @property
-    def fullfilled(self):
-        return self is State.FULLFILLED
-
-    @property
-    def rejected(self):
-        return self is State.REJECTED
-    
-    @property
-    def settled(self):
-        return self is State.REJECTED or self is State.FULLFILLED
-
-class TaskCallback:
-    def __init__(self) -> None:
-        pass
 
 class Pledge:
     ''''''
@@ -66,18 +41,21 @@ class Pledge:
         self._error = None
 
         self.is_handling = False
+        self.is_settled = Event(self._loop)
     
-    def _set_result(self, result):
+    def set_result(self, result):
         if result is not None:
             self._state = State.FULLFILLED
             if not isinstance(result, tuple):
                 result = (result, )
         self._result = result
+        self.is_settled.set()
     
-    def _set_error(self, error):
+    def set_error(self, error):
         if error is not None:
             self._state = State.REJECTED
         self._error = error
+        self.is_settled.set()
 
     async def _async_execute(self, *args, **kwargs):
         ''''''
@@ -87,59 +65,61 @@ class Pledge:
             self.is_handling = False
             if not isinstance(success, tuple):
                 success = (success, )
-            self._set_result(success)
+            self.set_result(success)
             self._fullfill(*success)
         except Exception as error:
             self.is_handling = False
-            self._set_error(error)
+            self.set_error(error)
             self._reject(error)
         finally:
             self.is_handling = False
+            self.is_settled.set()
+        return self._result, self._error
 
     def _execute(self, *args, **kwargs):
         '''
         执行self._func
         '''
-        success, error = None, None
-        if callable(self._func):
-            if inspect.iscoroutinefunction(self._func):
-                self._loop.async_call(self._async_execute, *args, **kwargs)
-            else:
-                self.is_handling = True
-                try:
-                    success = self._func(*args, **kwargs)
-                    self.is_handling = False
-                    if not isinstance(success, tuple):
-                        success = (success, )
-                    self._set_result(success)
-                    self._fullfill(*success)
-                except Exception as error:
-                    self.is_handling = False
-                    self._set_error(error)
-                    self._reject(error)
-                finally:
-                    self.is_handling = False
+        self.is_handling = True
+        try:
+            success = self._func(*args, **kwargs)
+            self.is_handling = False
+            if not isinstance(success, tuple):
+                success = (success, )
+            self.set_result(success)
+            self._fullfill(*success)
+        except Exception as error:
+            self.is_handling = False
+            self.set_error(error)
+            self._reject(error)
+        finally:
+            self.is_handling = False
+            self.is_settled.set()
+        return self._result, self._error
 
 
     def _fullfill(self, *ret):
         self._state = State.FULLFILLED
         for pledge in self._on_fulfillment:
-            pledge._execute(*ret)
+            pledge.apply(*ret)
 
 
     def _reject(self, error):
         self._state = State.REJECTED
         for pledge in self._on_rejection:
-            pledge._execute(error)
+            pledge.apply(error)
 
 
     def apply(self, *args, **kwargs):
-        if self._func is not None:
-            self._execute(*args, **kwargs)
-        elif self._result is not None:
+        if self._result is not None:
             self._fullfill(*self._result)
         elif self._error is not None:
             self._reject(self._error)
+        elif self._func is not None:
+            if inspect.iscoroutinefunction(self._func):
+                self._loop.async_call(self._async_execute, *args, **kwargs)
+            elif callable(self._func):
+                self._execute(*args, **kwargs)
 
 
     def then(self, on_fulfillment=None, on_rejection=None):
@@ -165,11 +145,11 @@ class Pledge:
         return self.then(_finally, _finally)
     
 
-    def cancel(self):
-        ''''''
+    # def cancel(self):
+    #     ''''''
 
-    def cancelled(self):
-        ''''''
+    # def cancelled(self):
+    #     ''''''
     
     @staticmethod
     def resolve(value):
@@ -196,8 +176,13 @@ class Pledge:
         ''''''
 
 
-    def __await__(self):
-        ''''''
+    # def __await__(self):
+    #     ''''''
+    #     if self._result is not None: return self._result, self._error
+    #     yield from self.is_settled.wait().__await__()
+    #     return self._result, self._error
+
+            
 
     def visualize(self):
         '''
