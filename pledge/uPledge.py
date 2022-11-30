@@ -1,9 +1,10 @@
-from ...Offline.LoopOffline import LoopOffline as Loop, Event
+from ...Offline.LoopOffline import LoopOffline as Loop, Event, Task
 from functools import partial, wraps
 import inspect
 from typing import Callable
 from typing import List
 from .state import State
+from copy import copy
 
 _loop: Loop = Loop()
 
@@ -29,11 +30,12 @@ class AggregateError(RuntimeError):
 class Pledge:
     ''''''
 
-    def __init__(self, func: Callable=None, loop: Loop=None):
+    def __init__(self, func: Callable=None, task: Task=None, loop: Loop=None):
         self._state = State.PENDING
 
         self._loop = loop if loop is not None else _loop
         self._func = func
+        self._task = task
         self._on_fulfillment: List[Pledge] = []
         self._on_rejection: List[Pledge] = []
 
@@ -41,7 +43,7 @@ class Pledge:
         self._error = None
 
         self.is_handling = False
-        self.is_settled = Event(self._loop)
+        # self.is_settled = Event(self._loop)
     
     def set_result(self, result):
         if result is not None:
@@ -49,13 +51,15 @@ class Pledge:
             if not isinstance(result, tuple):
                 result = (result, )
         self._result = result
-        self.is_settled.set()
+        self._loop = None
+        # self.is_settled.set()
     
     def set_error(self, error):
         if error is not None:
             self._state = State.REJECTED
         self._error = error
-        self.is_settled.set()
+        self._loop = None
+        # self.is_settled.set()
 
     async def _async_execute(self, *args, **kwargs):
         ''''''
@@ -65,15 +69,13 @@ class Pledge:
             self.is_handling = False
             if not isinstance(success, tuple):
                 success = (success, )
-            self.set_result(success)
             self._fullfill(*success)
         except Exception as error:
             self.is_handling = False
-            self.set_error(error)
             self._reject(error)
         finally:
             self.is_handling = False
-            self.is_settled.set()
+            # self.is_settled.set()
         return self._result, self._error
 
     def _execute(self, *args, **kwargs):
@@ -94,19 +96,25 @@ class Pledge:
             self._reject(error)
         finally:
             self.is_handling = False
-            self.is_settled.set()
+            # self.is_settled.set()
         return self._result, self._error
 
 
     def _fullfill(self, *ret):
         self._state = State.FULLFILLED
-        for pledge in self._on_fulfillment:
+        self.set_result(ret)
+        _on_fulfillment = copy(self._on_fulfillment)
+        self._on_fulfillment.clear()
+        for pledge in _on_fulfillment:
             pledge.apply(*ret)
 
 
     def _reject(self, error):
         self._state = State.REJECTED
-        for pledge in self._on_rejection:
+        self.set_error(error)
+        _on_rejection = copy(self._on_rejection)
+        self._on_rejection.clear()
+        for pledge in _on_rejection:
             pledge.apply(error)
 
 
@@ -126,11 +134,15 @@ class Pledge:
         """
         """
         if on_rejection is not None:
-            pledge = Pledge(on_rejection, self._loop)
+            pledge = Pledge(on_rejection, loop=self._loop)
             self._on_rejection.append(pledge)
+            if self._state.rejected:
+                self._reject(self._error)
         if on_fulfillment is not None:
-            pledge = Pledge(on_fulfillment, self._loop)
+            pledge = Pledge(on_fulfillment, loop=self._loop)
             self._on_fulfillment.append(pledge)
+            if self._state.fullfilled:
+                self._fullfill(*self._result)
 
         return pledge
 
@@ -152,16 +164,50 @@ class Pledge:
     #     ''''''
     
     @staticmethod
-    def resolve(value):
+    def resolve(value, loop=_loop) -> 'Pledge':
         ''''''
+        pledge = None
+        if isinstance(value, Pledge):
+            pledge = value
+        elif isinstance(value, Task):
+            pledge = Pledge(task=value, loop=loop)
+            value.add_done_callback(
+                partial(pledge._fullfill, None))
+        else:
+            pledge = Pledge(loop=loop)
+            pledge._fullfill(value)
+        return pledge
 
     @staticmethod
     def reject(reason):
         ''''''
     
     @staticmethod
-    def all(promises):
+    def all(pledges, loop=_loop):
         ''''''
+        pledge = Pledge(loop=loop)
+        results = []
+        total = len(pledges)
+        cnt_fulfilled = 0
+
+        def _resolve(index, result):
+            nonlocal results, cnt_fulfilled
+
+            if len(results) < index + 1:
+                results += [None] * (index + 1 - len(results))
+            results[index] = result
+            cnt_fulfilled += 1
+            if cnt_fulfilled == total:
+                pledge._fullfill(results)
+
+        index = 0
+        for p in pledges:
+            Pledge.resolve(p, loop=loop).then(partial(_resolve, index), pledge.set_error)
+            index += 1
+        
+        if total == cnt_fulfilled:
+            pledge._fullfill(results)
+        return pledge
 
     @staticmethod
     def all_settled(promises):
