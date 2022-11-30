@@ -69,7 +69,7 @@ class Pledge:
             self.is_handling = False
             if not isinstance(success, tuple):
                 success = (success, )
-            self._fullfill(*success)
+            self._fulfill(*success)
         except Exception as error:
             self.is_handling = False
             self._reject(error)
@@ -89,7 +89,7 @@ class Pledge:
             if not isinstance(success, tuple):
                 success = (success, )
             self.set_result(success)
-            self._fullfill(*success)
+            self._fulfill(*success)
         except Exception as error:
             self.is_handling = False
             self.set_error(error)
@@ -100,7 +100,7 @@ class Pledge:
         return self._result, self._error
 
 
-    def _fullfill(self, *ret):
+    def _fulfill(self, *ret):
         self._state = State.FULLFILLED
         self.set_result(ret)
         _on_fulfillment = copy(self._on_fulfillment)
@@ -120,7 +120,7 @@ class Pledge:
 
     def apply(self, *args, **kwargs):
         if self._result is not None:
-            self._fullfill(*self._result)
+            self._fulfill(*self._result)
         elif self._error is not None:
             self._reject(self._error)
         elif self._func is not None:
@@ -134,15 +134,21 @@ class Pledge:
         """
         """
         if on_rejection is not None:
-            pledge = Pledge(on_rejection, loop=self._loop)
+            if not isinstance(on_rejection, Pledge):
+                pledge = Pledge(on_rejection, loop=self._loop)
+            else:
+                pledge = on_rejection
             self._on_rejection.append(pledge)
             if self._state.rejected:
                 self._reject(self._error)
         if on_fulfillment is not None:
-            pledge = Pledge(on_fulfillment, loop=self._loop)
+            if not isinstance(on_fulfillment, Pledge):
+                pledge = Pledge(on_fulfillment, loop=self._loop)
+            else:
+                pledge = on_fulfillment
             self._on_fulfillment.append(pledge)
             if self._state.fullfilled:
-                self._fullfill(*self._result)
+                self._fulfill(*self._result)
 
         return pledge
 
@@ -168,14 +174,18 @@ class Pledge:
         ''''''
         pledge = None
         if isinstance(value, Pledge):
-            pledge = value
+            pledge = Pledge(loop=loop)
+            value.then(
+                lambda *res: pledge._fulfill(*res),
+                lambda err: pledge._reject(err)
+            )
         elif isinstance(value, Task):
             pledge = Pledge(task=value, loop=loop)
             value.add_done_callback(
-                partial(pledge._fullfill, None))
+                partial(pledge._fulfill, None))
         else:
             pledge = Pledge(loop=loop)
-            pledge._fullfill(value)
+            pledge._fulfill(value)
         return pledge
 
     @staticmethod
@@ -198,7 +208,7 @@ class Pledge:
             results[index] = result
             cnt_fulfilled += 1
             if cnt_fulfilled == total:
-                pledge._fullfill(results)
+                pledge._fulfill(results)
 
         index = 0
         for p in pledges:
@@ -206,7 +216,7 @@ class Pledge:
             index += 1
         
         if total == cnt_fulfilled:
-            pledge._fullfill(results)
+            pledge._fulfill(results)
         return pledge
 
     @staticmethod
@@ -214,13 +224,55 @@ class Pledge:
         ''''''
 
     @staticmethod
-    def any(promises):
+    def any(promises, loop=_loop) -> 'Pledge':
         ''''''
+        pledge = Pledge(loop=loop)
+        errors = []
+        total = len(promises)
+        rejected = 0
+
+        def _reject(index, error):
+            nonlocal errors, rejected
+
+            if len(errors) < index + 1:
+                errors += [None] * (index + 1 - len(errors))
+            errors[index] = error
+            rejected += 1
+            if rejected == total:
+                pledge._reject(AggregateError(errors))
+
+        index = 0
+        for promise in promises:
+            Pledge.resolve(promise, loop=loop).then(pledge._fulfill, partial(_reject, index))
+            index += 1
+
+        if total == rejected:
+            pledge._reject(AggregateError(errors))
+        return pledge
 
     @staticmethod
-    def race(promises):
+    def race(pledges, loop=_loop):
         ''''''
+        pledge = Pledge(loop=_loop)
+        settled = False
 
+        def _resolve(result):
+            nonlocal settled
+
+            if not settled:
+                settled = True
+                pledge._fulfill(result)
+
+        def _reject(error):
+            nonlocal settled
+
+            if not settled:
+                settled = True
+                pledge._reject(error)
+
+        for promise in pledges:
+            Pledge.resolve(promise, loop=loop).then(_resolve, _reject)
+        return pledge
 
     # def __await__(self):
     #     ''''''
