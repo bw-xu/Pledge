@@ -189,8 +189,11 @@ class Pledge:
         return pledge
 
     @staticmethod
-    def reject(reason):
+    def reject(reason, loop=_loop):
         ''''''
+        promise = Pledge(loop=loop)
+        promise._reject(reason)
+        return promise
     
     @staticmethod
     def all(pledges, loop=_loop):
