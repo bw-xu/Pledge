@@ -2,7 +2,7 @@ from ...Offline.LoopOffline import LoopOffline as Loop, Event, Task
 from functools import partial, wraps
 import inspect
 from typing import Callable
-from typing import List
+from typing import List, Iterable
 from .state import State
 from copy import copy
 
@@ -163,11 +163,19 @@ class Pledge:
         return self.then(_finally, _finally)
     
 
-    # def cancel(self):
-    #     ''''''
+    def cancel(self):
+        ''''''
+        if self._task is not None:
+            self._task.cancel()
+        self._reject(Exception('Cancelled'))
 
-    # def cancelled(self):
-    #     ''''''
+
+    def cancelled(self):
+        ''''''
+        if self._task is not None:
+            return self._task.cancelled()
+        else:
+            return self._state is State.REJECTED
     
     @staticmethod
     def resolve(value, loop=_loop) -> 'Pledge':
@@ -223,8 +231,12 @@ class Pledge:
         return pledge
 
     @staticmethod
-    def all_settled(promises):
+    def all_settled(promises: Iterable['Pledge']):
         ''''''
+        return Pledge.all([promise.then(
+            lambda value: {'status': State.FULLFILLED, 'value': value}).catch(
+                lambda reason: {'status': State.REJECTED, 'reason': reason})
+            for promise in promises])
 
     @staticmethod
     def any(promises, loop=_loop) -> 'Pledge':

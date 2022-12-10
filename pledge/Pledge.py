@@ -4,16 +4,20 @@ import inspect
 from asyncio import Future, Task
 asyncio.Event
 # from AscellaQRIS.Scheduler.Loop import Loop
+from typing import Callable
+from .state import State
+from ...Online.LoopOnline import LoopOnline as Loop, Task
+from typing import List, Iterable
+from copy import copy
 
+_loop: Loop =  Loop()
 
-# _loop: Loop = None
+def get_event_loop():
+    return _loop
 
-# def get_event_loop():
-#     return _loop
-
-# def set_event_loop(loop):
-#     global _loop
-#     _loop = loop
+def set_event_loop(loop):
+    global _loop
+    _loop = loop
 
 if not hasattr(asyncio, 'create_task'):  # pragma: no cover
     asyncio.create_task = asyncio.ensure_future
@@ -34,58 +38,130 @@ class AggregateError(RuntimeError):
 class Pledge:
     ''''''
 
-    def __init__(self, func=None, *args):
-        self.future = Future()
-        self.func = func
-        self.args = args
+    def __init__(self, func: Callable=None, task: Task=None, loop: Loop=None):
+        self._state = State.PENDING
 
-    def go(self):
-        self.func(*self.args)
+        self._loop = loop if loop is not None else _loop
+        self._func = func
+        self._task = task
+        self._on_fulfillment: List[Pledge] = []
+        self._on_rejection: List[Pledge] = []
 
-    def finish(self, success, error):
-        ''''''
+        self._result = None
+        self._error = None
+        # self.is_settled = Event(self._loop)
+
+    def set_result(self, result):
+        if result is not None:
+            self._state = State.FULLFILLED
+            if not isinstance(result, tuple):
+                result = (result, )
+        self._result = result
+        self._loop = None
+        # self.is_settled.set()
+    
+    def set_error(self, error):
         if error is not None:
-            if not isinstance(error, BaseException):
-                error = Exception(error)
+            self._state = State.REJECTED
+        self._error = error
+        self._loop = None
+        # self.is_settled.set()
+
+    async def _async_execute(self, *args, **kwargs):
+        ''''''
+        self.is_handling = True
+        try:
+            success = await self._func(*args, **kwargs)
+            self.is_handling = False
+            if not isinstance(success, tuple):
+                success = (success, )
+            self._fulfill(*success)
+        except Exception as error:
+            self.is_handling = False
             self._reject(error)
-        else:
-            self._resolve(success)
+        finally:
+            self.is_handling = False
+            # self.is_settled.set()
+        return self._result, self._error
+    
+    def _execute(self, *args, **kwargs):
+        '''
+        执行self._func
+        '''
+        self.is_handling = True
+        try:
+            success = self._func(*args, **kwargs)
+            self.is_handling = False
+            if not isinstance(success, tuple):
+                success = (success, )
+            self.set_result(success)
+            self._fulfill(*success)
+        except Exception as error:
+            self.is_handling = False
+            self.set_error(error)
+            self._reject(error)
+        finally:
+            self.is_handling = False
+            # self.is_settled.set()
+        return self._result, self._error
+
+    def _fulfill(self, *ret):
+        self._state = State.FULLFILLED
+        self.set_result(ret)
+        _on_fulfillment = copy(self._on_fulfillment)
+        self._on_fulfillment.clear()
+        for pledge in _on_fulfillment:
+            pledge.apply(*ret)
+
+
+    def _reject(self, error):
+        self._state = State.REJECTED
+        self.set_error(error)
+        _on_rejection = copy(self._on_rejection)
+        self._on_rejection.clear()
+        for pledge in _on_rejection:
+            pledge.apply(error)
+            
+    def apply(self, *args, **kwargs):
+        if self._result is not None:
+            self._fulfill(*self._result)
+        elif self._error is not None:
+            self._reject(self._error)
+        elif self._func is not None:
+            if inspect.iscoroutinefunction(self._func):
+                self._loop.async_call(self._async_execute, *args, **kwargs)
+            elif callable(self._func):
+                self._execute(*args, **kwargs)
 
 
 
-
-    def then(self, on_resolved=None, on_rejected=None):
-        """Appends fulfillment and rejection handlers to the promise.
-
-        :param on_resolved: an optional fulfillment handler.
-        :param on_rejected: an optional rejection handler.
-
-        Returns a new promise that resolves to the return value of the called
-        handler, or to the original settled value if a handler was not
-        provided.
+    def then(self, on_fulfillment=None, on_rejection=None):
         """
-        pledge = Pledge()
-        if on_resolved is not None: on_resolved = pledgify(on_resolved)
-        if on_rejected is not None: on_rejected = pledgify(on_rejected)
-        self.future.add_done_callback(
-            partial(self._handle_done, on_resolved, on_rejected, pledge)
-        )
+        """
+        if on_rejection is not None:
+            if not isinstance(on_rejection, Pledge):
+                pledge = Pledge(on_rejection, loop=self._loop)
+            else:
+                pledge = on_rejection
+            self._on_rejection.append(pledge)
+            if self._state.rejected:
+                self._reject(self._error)
+        if on_fulfillment is not None:
+            if not isinstance(on_fulfillment, Pledge):
+                pledge = Pledge(on_fulfillment, loop=self._loop)
+            else:
+                pledge = on_fulfillment
+            self._on_fulfillment.append(pledge)
+            if self._state.fullfilled:
+                self._fulfill(*self._result)
+
         return pledge
 
+
     def catch(self, on_rejected):
-        """Appends a rejection handler callback to the promise.
-        :param on_rejected: the rejection handler.
-        Returns a new promise that resolves to the return value of the
-        handler.
-        """
         return self.then(None, on_rejected)
 
     def finally_(self, on_settled):
-        """Appends a fulfillment and reject handler to the promise.
-        :param on_settled: the handler.
-        The handler is invoked when the promise is fulfilled or rejected.
-        Returns a new promise that resolves when the original promise settles.
-        """
         def _finally(result):
             return on_settled()
 
@@ -93,115 +169,86 @@ class Pledge:
     
 
     def cancel(self):
-        """Cancels a promise, if possible.
-        A promise that is cancelled rejects with a ``asyncio.CancelledError``.
-        """
-        return self.future.cancel()
+        ''''''
+        if self._task is not None:
+            self._task.cancel()
+        self._reject(Exception('Cancelled'))
+
 
     def cancelled(self):
-        """Checks if a promise has been cancelled."""
-        return self.future.cancelled()
+        ''''''
+        if self._task is not None:
+            return self._task.cancelled()
+        else:
+            return self._state is State.REJECTED
+    
+
     
     @staticmethod
-    def resolve(value):
-        """Returns a new Pledge object that resolves to the given value.
-
-        :param value: the value the promise will resolve to.
-
-        If the value is another ``Pledge`` instance, the new promise will
-        resolve or reject when this promise does. If the value is an asyncio
-        ``Task`` object, the new promise will be associated with the task and
-        will pass cancellation requests to it if its :func:`Pledge.cancel`
-        method is invoked. Any other value creates a promise that immediately
-        resolves to the value.
-        """
+    def resolve(value, loop=_loop) -> 'Pledge':
+        ''''''
         pledge = None
         if isinstance(value, Pledge):
-            pledge = Pledge()
+            pledge = Pledge(loop=loop)
             value.then(
-                lambda res: pledge._resolve(res),
+                lambda *res: pledge._fulfill(*res),
                 lambda err: pledge._reject(err)
             )
-        elif isinstance(value, asyncio.Task):
-            pledge = TaskPledge(value)
+        elif isinstance(value, Task):
+            pledge = Pledge(task=value, loop=loop)
             value.add_done_callback(
-                partial(Pledge._handle_done, None, None, pledge))
+                partial(pledge._fulfill, None))
         else:
-            pledge = Pledge()
-            pledge._resolve(value)
+            pledge = Pledge(loop=loop)
+            pledge._fulfill(value)
         return pledge
 
     @staticmethod
-    def reject(reason):
-        """Returns a new promise object that is rejected with the given reason.
-
-        :param reason: the rejection reason. Must be an ``Exception`` instance.
-        """
-        promise = Pledge()
+    def reject(reason, loop=_loop):
+        ''''''
+        promise = Pledge(loop=loop)
         promise._reject(reason)
         return promise
     
     @staticmethod
-    def all(promises):
-        """Wait for all promises to be resolved, or for any to be rejected.
-        :param promises: a list of promises to wait for.
-        Returns a promise that resolves to a aggregating list of all the values
-        from the resolved input promises, in the same order as given. If one or
-        more of the input promises are rejected, the returned promise is
-        rejected with the reason of the first rejected promise.
-        """
-        new_promise = Pledge()
+    def all(pledges, loop=_loop):
+        ''''''
+        pledge = Pledge(loop=loop)
         results = []
-        total = len(promises)
-        resolved = 0
+        total = len(pledges)
+        cnt_fulfilled = 0
 
         def _resolve(index, result):
-            nonlocal results, resolved
+            nonlocal results, cnt_fulfilled
 
             if len(results) < index + 1:
                 results += [None] * (index + 1 - len(results))
             results[index] = result
-            resolved += 1
-            if resolved == total:
-                new_promise._resolve(results)
+            cnt_fulfilled += 1
+            if cnt_fulfilled == total:
+                pledge._fulfill(results)
 
         index = 0
-        for promise in promises:
-            Pledge.resolve(promise).then(partial(_resolve, index),
-                                          new_promise._reject)
+        for p in pledges:
+            Pledge.resolve(p, loop=loop).then(partial(_resolve, index), pledge.set_error)
             index += 1
-
-        if total == resolved:
-            new_promise._resolve(results)
-        return new_promise
+        
+        if total == cnt_fulfilled:
+            pledge._fulfill(results)
+        return pledge
 
     @staticmethod
-    def all_settled(promises):
-        """Wait until all promises are resolved or rejected.
-        :param promises: a list of promises to wait for.
-        Returns a promise that resolves to a list of dicts, where each dict
-        describes the outcome of each promise. For a promise that was
-        fulfilled, the dict has this format::
-            {'status': 'fulfilled', 'value': <resolved-value>}
-        For a promise that was rejected, the dict has this format::
-            {'status': 'rejected', 'reason': <rejected-reason>}
-        """
+    def all_settled(promises: Iterable['Pledge']):
+        ''''''
         return Pledge.all([promise.then(
-            lambda value: {'status': 'fulfilled', 'value': value}).catch(
-                lambda reason: {'status': 'rejected', 'reason': reason})
+            lambda value: {'status': State.FULLFILLED, 'value': value}).catch(
+                lambda reason: {'status': State.REJECTED, 'reason': reason})
             for promise in promises])
-    
 
     @staticmethod
-    def any(promises):
-        """Wait until any of the promises given resolves.
-        :oaram promises: a list of promises to wait for.
-        Returns a promise that resolves with the value of the first input
-        promise. Pledge rejections are ignored, except when all the input
-        promises are rejected, in which case the returned promise rejects with
-        an :class:`AggregateError`.
-        """
-        new_promise = Pledge()
+    def any(promises, loop=_loop) -> 'Pledge':
+        ''''''
+        pledge = Pledge(loop=loop)
         errors = []
         total = len(promises)
         rejected = 0
@@ -214,26 +261,21 @@ class Pledge:
             errors[index] = error
             rejected += 1
             if rejected == total:
-                new_promise._reject(AggregateError(errors))
+                pledge._reject(AggregateError(errors))
 
         index = 0
         for promise in promises:
-            Pledge.resolve(promise).then(new_promise._resolve,
-                                          partial(_reject, index))
+            Pledge.resolve(promise, loop=loop).then(pledge._fulfill, partial(_reject, index))
             index += 1
 
         if total == rejected:
-            new_promise._reject(AggregateError(errors))
-        return new_promise
+            pledge._reject(AggregateError(errors))
+        return pledge
 
     @staticmethod
-    def race(promises):
-        """Wait until any of the promises is fulfilled or rejected.
-        :param promises: a list of promises to wait for.
-        Returns a promise that resolves or rejects with the first input
-        promise that settles.
-        """
-        new_promise = Pledge()
+    def race(pledges, loop=_loop):
+        ''''''
+        pledge = Pledge(loop=_loop)
         settled = False
 
         def _resolve(result):
@@ -241,90 +283,89 @@ class Pledge:
 
             if not settled:
                 settled = True
-                new_promise._resolve(result)
+                pledge._fulfill(result)
 
         def _reject(error):
             nonlocal settled
 
             if not settled:
                 settled = True
-                new_promise._reject(error)
-
-        for promise in promises:
-            Pledge.resolve(promise).then(_resolve, _reject)
-        return new_promise
-    
-
-
-    def _resolve(self, result):
-        self.future.set_result(result)
-
-
-    def _reject(self, error):
-        self.future.set_exception(error)
-
-    
-
-    @staticmethod
-    def _handle_done(on_resolved, on_rejected, pledge, future: Future):
-        try:
-            result = future.result()
-            Pledge._handle_callback(result, on_resolved, pledge)
-        except BaseException as error:
-            Pledge._handle_callback(error, on_rejected, pledge, resolve=False)
-
-    @staticmethod
-    def _handle_callback(result, callback, pledge: 'Pledge', resolve=True):
-        if callable(callback):
-            try:
-                callback_result = callback(result)
-                if isinstance(callback_result, Pledge):
-                    callback_result.then(
-                        lambda res: pledge._resolve(res),
-                        lambda err: pledge._reject(err)
-                    )
-                else:
-                    pledge._resolve(callback_result)
-            except BaseException as error:
                 pledge._reject(error)
-        elif resolve:
-            pledge._resolve(result)
-        else:
-            pledge._reject(result)
 
-    def __await__(self):
-        def _reject(error):
-            raise error
-
-        return self.catch(_reject).future.__await__()
+        for promise in pledges:
+            Pledge.resolve(promise, loop=loop).then(_resolve, _reject)
+        return pledge
 
 
-class TaskPledge(Pledge):
-    def __init__(self, task):
-        super().__init__()
-        self.task: Task = task
+    def visualize(self):
+        '''
+        Pending: Blue, Fullfiled: Green, Rejected: Red
+        fulfill: full line, reject: dashed line
+        '''
+        import networkx as nx
+        import matplotlib.pyplot as plt
 
-    def cancel(self):
-        # cancel the task associated with this future
-        # (the future will receive the cancellation error)
-        return self.task.cancel()
+        G = nx.DiGraph()
+        node_id = 0
+        colors = {
+            State.PENDING: 'blue',
+            State.FULLFILLED: 'green',
+            State.REJECTED: 'red',
+        }
+        def add(_G: nx.DiGraph, pledge: Pledge, nid, add_self=True, layer=0):
+            nonlocal node_id
+            if add_self:
+                name = pledge._func.__name__
+                state = pledge._state
+                handling = pledge.is_handling
+                G.add_node(nid, name=name, state=state, layer=layer, handling=handling)
+                node_id += 1
+                layer += 1
+            for p in pledge._on_fulfillment:
+                name = p._func.__name__
+                state = p._state
+                handling = p.is_handling
+                G.add_node(node_id, name=name, state=state, layer=layer, handling=handling)
+                G.add_edge(nid, node_id, condition='fulfill')
+                nid2 = node_id
+                node_id += 1
+                add(_G, p, nid2, False, layer=layer+1)
 
-    def cancelled(self):
-        return self.task.cancelled()
+            for p in pledge._on_rejection:
+                name = p._func.__name__
+                state = p._state
+                handling = p.is_handling
+                G.add_node(node_id, name=name, state=state, layer=layer, handling=handling)
+                G.add_edge(nid, node_id, condition='reject')
+                nid2 = node_id
+                node_id += 1
+                add(_G, p, nid2, False, layer=layer+1)
+
+
+        add(G, self, node_id)
+        pos = nx.multipartite_layout(G, subset_key="layer")
+        color = [colors[data["state"]] for v, data in G.nodes(data=True)]
+        nx.draw_networkx_nodes(G, pos, node_color=color)
+        nodes_handling = [v for v, data in G.nodes.data() if data['handling']]
+        nx.draw_networkx_nodes(G, pos, node_color='yellow', nodelist=nodes_handling)
+
+
+        edges_fulfill = [data[:2] for data in G.edges.data() if data[2]['condition'] == 'fulfill']
+        edges_reject = [data[:2] for data in G.edges.data() if data[2]['condition'] == 'reject']
+        if len(edges_fulfill) > 0: nx.draw_networkx_edges(G, pos, edgelist=edges_fulfill, style='-')
+        if len(edges_reject) > 0: nx.draw_networkx_edges(G, pos, edgelist=edges_reject, style='--')
+
+        labels = {v: data['name'] for v, data in G.nodes.data()}
+        labels = nx.draw_networkx_labels(G, pos, labels)
+        for t in labels.values():
+            t.set_rotation(30)
+
+        plt.tight_layout()
+        plt.axis("off")
+        plt.show()
+        pass
+
 
     
     
 
-
-def pledgify(func):
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        try:
-            result = func(*args, **kwargs)
-        except BaseException as error:
-            return Pledge.reject(error)
-        if inspect.iscoroutine(result):
-            result = asyncio.get_event_loop().create_task(result)
-        return Pledge.resolve(result)
-
-    return wrapper
