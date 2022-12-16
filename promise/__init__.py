@@ -1,2 +1,2 @@
 from .Promise import Promise
-from .uPromise import uPromise as uPledge
+from .uPromise import uPromise
