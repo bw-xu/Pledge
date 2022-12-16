@@ -1,2 +1,2 @@
-__all__ = ('Pledge', 'uPledge')
+__all__ = ('Promise', 'uPledge')
 from .pledge import *

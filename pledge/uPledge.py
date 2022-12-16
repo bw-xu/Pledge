@@ -1,4 +1,5 @@
-from ...Offline.LoopOffline import LoopOffline as Loop, Event, Task
+from ...Offline.LoopOffline import LoopOffline as Loop, Task
+from ...Offline.Event import Event
 from functools import partial, wraps
 import inspect
 from typing import Callable
@@ -43,8 +44,8 @@ class Pledge:
         self._error = None
 
         self.is_handling = False
-        # self.is_settled = Event(self._loop)
-    
+        self.is_settled: Event = None # Event(self._loop)
+
     def set_result(self, result):
         if result is not None:
             self._state = State.FULLFILLED
@@ -52,14 +53,14 @@ class Pledge:
                 result = (result, )
         self._result = result
         self._loop = None
-        # self.is_settled.set()
+        if self.is_settled is not None: self.is_settled.set()
     
     def set_error(self, error):
         if error is not None:
             self._state = State.REJECTED
         self._error = error
         self._loop = None
-        # self.is_settled.set()
+        if self.is_settled is not None: self.is_settled.set()
 
     async def _async_execute(self, *args, **kwargs):
         ''''''
@@ -75,7 +76,7 @@ class Pledge:
             self._reject(error)
         finally:
             self.is_handling = False
-            # self.is_settled.set()
+            if self.is_settled is not None: self.is_settled.set()
         return self._result, self._error
 
     def _execute(self, *args, **kwargs):
@@ -96,7 +97,7 @@ class Pledge:
             self._reject(error)
         finally:
             self.is_handling = False
-            # self.is_settled.set()
+            if self.is_settled is not None: self.is_settled.set()
         return self._result, self._error
 
 
@@ -289,13 +290,21 @@ class Pledge:
             Pledge.resolve(promise, loop=loop).then(_resolve, _reject)
         return pledge
 
-    # def __await__(self):
-    #     ''''''
-    #     if self._result is not None: return self._result, self._error
-    #     yield from self.is_settled.wait().__await__()
-    #     return self._result, self._error
 
-            
+    def __call__(self, *args, **kwargs):
+        self.apply(*args, **kwargs)
+        return self
+
+
+    def __await__(self):
+        ''''''
+        if self._result is not None: return self._result, self._error
+        if self.is_settled is None: self.is_settled = Event(self._loop)
+
+        yield from self.is_settled.wait().__await__()
+
+        return self._result, self._error
+
 
     def visualize(self):
         '''
