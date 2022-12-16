@@ -6,6 +6,9 @@ from typing import Callable
 from typing import List, Iterable
 from .state import State
 from copy import copy
+from typing import TypeVar, Awaitable, Generic, Generator, Coroutine, Tuple
+
+T = TypeVar('T')
 
 _loop: Loop = Loop()
 
@@ -28,17 +31,17 @@ class AggregateError(RuntimeError):
         self.errors = errors
 
 
-class uPromise:
+class uPromise(Awaitable[Tuple[T, Exception]]):
     ''''''
 
-    def __init__(self, func: Callable=None, task: Task=None, loop: Loop=None):
+    def __init__(self, func: Callable[[Any], T]=None, task: Task=None, loop: Loop=None):
         self._state = State.PENDING
 
         self._loop = loop if loop is not None else _loop
         self._func = func
         self._task = task
-        self._on_fulfillment: List[uPromise] = []
-        self._on_rejection: List[uPromise] = []
+        self._on_fulfillment: List[uPromise[T]] = []
+        self._on_rejection: List[uPromise[T]] = []
 
         self._result = None
         self._error = None
@@ -62,7 +65,7 @@ class uPromise:
         self._loop = None
         if self.is_settled is not None: self.is_settled.set()
 
-    async def _async_execute(self, *args, **kwargs):
+    async def _async_execute(self, *args, **kwargs) -> Tuple[T, 'None|Exception']:
         ''''''
         self.is_handling = True
         try:
@@ -79,7 +82,7 @@ class uPromise:
             if self.is_settled is not None: self.is_settled.set()
         return self._result, self._error
 
-    def _execute(self, *args, **kwargs):
+    def _execute(self, *args, **kwargs) -> Tuple[T, 'None|Exception']:
         '''
         执行self._func
         '''
@@ -131,7 +134,7 @@ class uPromise:
                 self._execute(*args, **kwargs)
 
 
-    def then(self, on_fulfillment=None, on_rejection=None):
+    def then(self, on_fulfillment=None, on_rejection=None) -> 'uPromise[T]':
         """
         """
         if on_rejection is not None:
@@ -179,7 +182,7 @@ class uPromise:
             return self._state is State.REJECTED
     
     @staticmethod
-    def resolve(value, loop=_loop) -> 'uPromise':
+    def resolve(value, loop=_loop) -> 'uPromise[T]':
         ''''''
         pledge = None
         if isinstance(value, uPromise):
@@ -198,14 +201,14 @@ class uPromise:
         return pledge
 
     @staticmethod
-    def reject(reason, loop=_loop):
+    def reject(reason, loop=_loop) -> 'uPromise[T]':
         ''''''
         promise = uPromise(loop=loop)
         promise._reject(reason)
         return promise
     
     @staticmethod
-    def all(pledges, loop=_loop):
+    def all(pledges, loop=_loop) -> 'uPromise[T]':
         ''''''
         pledge = uPromise(loop=loop)
         results = []
@@ -232,15 +235,15 @@ class uPromise:
         return pledge
 
     @staticmethod
-    def all_settled(promises: Iterable['uPromise']):
+    def all_settled(promises: Iterable['uPromise[T]'], loop=_loop):
         ''''''
         return uPromise.all([promise.then(
             lambda value: {'status': State.FULLFILLED, 'value': value}).catch(
                 lambda reason: {'status': State.REJECTED, 'reason': reason})
-            for promise in promises])
+            for promise in promises], loop=loop)
 
     @staticmethod
-    def any(promises, loop=_loop) -> 'uPromise':
+    def any(promises, loop=_loop) -> 'uPromise[T]':
         ''''''
         pledge = uPromise(loop=loop)
         errors = []
@@ -267,7 +270,7 @@ class uPromise:
         return pledge
 
     @staticmethod
-    def race(pledges, loop=_loop):
+    def race(pledges, loop=_loop) -> 'uPromise[T]':
         ''''''
         pledge = uPromise(loop=_loop)
         settled = False
@@ -291,7 +294,7 @@ class uPromise:
         return pledge
 
 
-    def __call__(self, *args, **kwargs):
+    def __call__(self, *args, **kwargs) -> 'uPromise[T]':
         self.apply(*args, **kwargs)
         return self
 

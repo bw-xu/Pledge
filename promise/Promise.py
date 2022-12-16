@@ -7,10 +7,12 @@ asyncio.Event
 from typing import Callable
 from .state import State
 from ...Online.LoopOnline import LoopOnline as Loop, Task
-from typing import List, Iterable
+from typing import List, Iterable, Any, Tuple
 from copy import copy
 from asyncio import Event
+from typing import TypeVar, Awaitable, Generic, Generator, Coroutine
 
+T = TypeVar('T')
 
 _loop: Loop =  Loop()
 
@@ -37,17 +39,17 @@ class AggregateError(RuntimeError):
         self.errors = errors
 
 
-class Promise:
+class Promise(Awaitable[Tuple[T, Exception]]):
     ''''''
 
-    def __init__(self, func: Callable=None, task: Task=None, loop: Loop=None):
+    def __init__(self, func: Callable[[Any], T]=None, task: Task=None, loop: Loop=None):
         self._state = State.PENDING
 
         self._loop = loop if loop is not None else _loop
         self._func = func
         self._task = task
-        self._on_fulfillment: List[Promise] = []
-        self._on_rejection: List[Promise] = []
+        self._on_fulfillment: List[Promise[T]] = []
+        self._on_rejection: List[Promise[T]] = []
 
         self._result = None
         self._error = None
@@ -58,9 +60,9 @@ class Promise:
     def set_result(self, result):
         if result is not None:
             self._state = State.FULLFILLED
-            if not isinstance(result, tuple):
-                result = (result, )
-        self._result = result
+            # if not isinstance(result, tuple):
+            #     result = (result, )
+        self._result: T = result
         self._loop = None
         if self.is_settled is not None: self.is_settled.set()
     
@@ -71,14 +73,14 @@ class Promise:
         self._loop = None
         if self.is_settled is not None: self.is_settled.set()
 
-    async def _async_execute(self, *args, **kwargs):
+    async def _async_execute(self, *args, **kwargs) -> Tuple[T, 'None|Exception']:
         ''''''
         self.is_handling = True
         try:
             success = await self._func(*args, **kwargs)
             self.is_handling = False
-            if not isinstance(success, tuple):
-                success = (success, )
+            # if not isinstance(success, tuple):
+            #     success = (success, )
             self._fulfill(*success)
         except Exception as error:
             self.is_handling = False
@@ -88,7 +90,7 @@ class Promise:
             if self.is_settled is not None: self.is_settled.set()
         return self._result, self._error
 
-    def _execute(self, *args, **kwargs):
+    def _execute(self, *args, **kwargs) -> Tuple[T, 'None|Exception']:
         '''
         执行self._func
         '''
@@ -96,8 +98,8 @@ class Promise:
         try:
             success = self._func(*args, **kwargs)
             self.is_handling = False
-            if not isinstance(success, tuple):
-                success = (success, )
+            # if not isinstance(success, tuple):
+            #     success = (success, )
             self.set_result(success)
             self._fulfill(*success)
         except Exception as error:
@@ -139,7 +141,7 @@ class Promise:
                 self._execute(*args, **kwargs)
 
 
-    def then(self, on_fulfillment=None, on_rejection=None):
+    def then(self, on_fulfillment=None, on_rejection=None) -> 'Promise[T]':
         """
         """
         if on_rejection is not None:
@@ -189,7 +191,7 @@ class Promise:
 
     
     @staticmethod
-    def resolve(value, loop=_loop) -> 'Promise':
+    def resolve(value, loop=_loop) -> 'Promise[T]':
         ''''''
         pledge = None
         if isinstance(value, Promise):
@@ -208,14 +210,14 @@ class Promise:
         return pledge
 
     @staticmethod
-    def reject(reason, loop=_loop):
+    def reject(reason, loop=_loop) -> 'Promise[T]':
         ''''''
         promise = Promise(loop=loop)
         promise._reject(reason)
         return promise
     
     @staticmethod
-    def all(pledges, loop=_loop):
+    def all(pledges, loop=_loop) -> 'Promise[T]':
         ''''''
         pledge = Promise(loop=loop)
         results = []
@@ -242,15 +244,15 @@ class Promise:
         return pledge
 
     @staticmethod
-    def all_settled(promises: Iterable['Promise']):
+    def all_settled(promises: Iterable['Promise[T]'], loop=_loop):
         ''''''
         return Promise.all([promise.then(
             lambda value: {'status': State.FULLFILLED, 'value': value}).catch(
                 lambda reason: {'status': State.REJECTED, 'reason': reason})
-            for promise in promises])
+            for promise in promises], loop=loop)
 
     @staticmethod
-    def any(promises, loop=_loop) -> 'Promise':
+    def any(promises, loop=_loop) -> 'Promise[T]':
         ''''''
         pledge = Promise(loop=loop)
         errors = []
@@ -277,7 +279,7 @@ class Promise:
         return pledge
 
     @staticmethod
-    def race(pledges, loop=_loop):
+    def race(pledges, loop=_loop) -> 'Promise[T]':
         ''''''
         pledge = Promise(loop=_loop)
         settled = False
@@ -301,18 +303,19 @@ class Promise:
         return pledge
 
 
-    def __call__(self, *args, **kwargs):
+    def __call__(self, *args, **kwargs) -> 'Promise[T]':
         self.apply(*args, **kwargs)
         return self
 
 
     def __await__(self):
-        ''''''
+        ''''''  
         if self._result is not None: return self._result, self._error
         if self.is_settled is None: self.is_settled = Event(self._loop)
 
         yield from self.is_settled.wait().__await__()
-
+        # self._result: T 
+        # self._error: 'None|Exception'
         return self._result, self._error
 
 
@@ -383,4 +386,3 @@ class Promise:
         plt.axis("off")
         plt.show()
         pass
-
