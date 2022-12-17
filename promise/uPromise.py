@@ -303,11 +303,12 @@ class uPromise(Awaitable[Tuple[T, Exception]]):
     def __await__(self):
         ''''''
         if self._result is not None: return self._result, self._error
-        if self.is_settled is None: self.is_settled = Event(self._loop)
+        if self.is_settled is None: self.is_settled = Event(loop=self._loop)
 
         yield from self.is_settled.wait().__await__()
 
-        return self._result, self._error
+        result = self._result[0] if len(self._result) == 1 else self._result
+        return result, self._error
 
 
     def visualize(self):

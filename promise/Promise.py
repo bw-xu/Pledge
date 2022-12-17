@@ -2,7 +2,6 @@ import asyncio
 from functools import partial, wraps
 import inspect
 from asyncio import Future, Task
-asyncio.Event
 # from AscellaQRIS.Scheduler.Loop import Loop
 from typing import Callable
 from .state import State
@@ -311,12 +310,13 @@ class Promise(Awaitable[Tuple[T, Exception]]):
     def __await__(self):
         ''''''  
         if self._result is not None: return self._result, self._error
-        if self.is_settled is None: self.is_settled = Event(self._loop)
+        if self.is_settled is None: self.is_settled = Event() # Event(loop=self._loop.loop)
 
         yield from self.is_settled.wait().__await__()
         # self._result: T 
         # self._error: 'None|Exception'
-        return self._result, self._error
+        result = self._result[0] if len(self._result) == 1 else self._result
+        return result, self._error
 
 
     def visualize(self):
