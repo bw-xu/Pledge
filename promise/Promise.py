@@ -79,8 +79,8 @@ class Promise(Awaitable[Tuple[T, Exception]]):
         try:
             success = await self._func(*args, **kwargs)
             self.is_handling = False
-            # if not isinstance(success, tuple):
-            #     success = (success, )
+            if not isinstance(success, tuple):
+                success = (success, )
             self._fulfill(*success)
         except Exception as error:
             self.is_handling = False
@@ -98,8 +98,8 @@ class Promise(Awaitable[Tuple[T, Exception]]):
         try:
             success = self._func(*args, **kwargs)
             self.is_handling = False
-            # if not isinstance(success, tuple):
-            #     success = (success, )
+            if not isinstance(success, tuple):
+                success = (success, )
             self.set_result(success)
             self._fulfill(*success)
         except Exception as error:
