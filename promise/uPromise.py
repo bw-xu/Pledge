@@ -307,7 +307,8 @@ class uPromise(Awaitable[Tuple[T, Exception]]):
 
         yield from self.is_settled.wait().__await__()
 
-        result = self._result[0] if len(self._result) == 1 else self._result
+        # result = self._result[0] if len(self._result) == 1 else self._result
+        result = self._result[0] if self._result is not None and len(self._result) == 1 else self._result
         return result, self._error
 
 
