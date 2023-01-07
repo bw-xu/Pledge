@@ -218,29 +218,43 @@ class Promise(Awaitable[Tuple[T, Exception]]):
     @staticmethod
     def all(pledges, loop=_loop) -> 'Promise[T]':
         ''''''
-        pledge = Promise(loop=loop)
-        results = []
+        promise = Promise(loop=loop)
         total = len(pledges)
         cnt_fulfilled = 0
+        cnt_reject = False
 
         def _resolve(index, result):
-            nonlocal results, cnt_fulfilled
+            nonlocal cnt_fulfilled
 
-            if len(results) < index + 1:
-                results += [None] * (index + 1 - len(results))
-            results[index] = result
+            # if len(promise._result) < index + 1:
+            #     promise._result += [None] * (index + 1 - len(promise._result))
+            if promise._result is None:
+                promise._result = [None for _ in range(len(pledges))]
+            promise._result[index] = result
             cnt_fulfilled += 1
-            if cnt_fulfilled == total:
-                pledge._fulfill(results)
+            if cnt_fulfilled >= total:
+                promise._fulfill(promise._result)
+
+        def _reject(reason):
+            ''''''
+            nonlocal cnt_reject
+            if cnt_reject == 0:
+                if promise._result is None:
+                    promise._result = [None for _ in range(len(pledges))]
+                promise._reject(reason)
+                # promise._result
+            cnt_reject += 1
 
         index = 0
         for p in pledges:
-            Promise.resolve(p, loop=loop).then(partial(_resolve, index), pledge.set_error)
+            prm = Promise.resolve(p, loop=loop)
+            prm.then(partial(_resolve, index), promise.set_error)
+            prm.catch(_reject)
             index += 1
         
         if total == cnt_fulfilled:
-            pledge._fulfill(results)
-        return pledge
+            promise._fulfill(promise._result)
+        return promise
 
     @staticmethod
     def all_settled(promises: Iterable['Promise[T]'], loop=_loop):
