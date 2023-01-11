@@ -35,7 +35,8 @@ class AggregateError(RuntimeError):
 class uPromise(Awaitable[Tuple[T, Exception]]):
     ''''''
 
-    def __init__(self, func: Callable[[Any], T]=None, task: Task=None, loop: Loop=None):
+    def __init__(self, func: Callable[[Any], T]=None, task: Task=None, loop: Loop=None, data: T=None):
+        self.data = data
         self._state = State.PENDING
 
         self._loop = loop if loop is not None else _loop

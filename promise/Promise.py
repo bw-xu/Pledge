@@ -41,7 +41,8 @@ class AggregateError(RuntimeError):
 class Promise(Awaitable[Tuple[T, Exception]]):
     ''''''
 
-    def __init__(self, func: Callable[[Any], T]=None, task: Task=None, loop: Loop=None):
+    def __init__(self, func: Callable[[Any], T]=None, task: Task=None, loop: Loop=None, data: T=None):
+        self.data = data
         self._state = State.PENDING
 
         self._loop = loop if loop is not None else _loop
@@ -56,7 +57,7 @@ class Promise(Awaitable[Tuple[T, Exception]]):
         self.is_handling = False
         self.is_settled: Event = None # Event(self._loop)
 
-    def set_result(self, result):
+    def set_result(self, result: T):
         if result is not None:
             self._state = State.FULLFILLED
             # if not isinstance(result, tuple):
@@ -68,7 +69,7 @@ class Promise(Awaitable[Tuple[T, Exception]]):
     def set_error(self, error):
         if error is not None:
             self._state = State.REJECTED
-        self._error = error
+        self._error: 'Exception|None' = error
         self._loop = None
         if self.is_settled is not None: self.is_settled.set()
 
@@ -329,6 +330,7 @@ class Promise(Awaitable[Tuple[T, Exception]]):
         yield from self.is_settled.wait().__await__()
         # self._result: T 
         # self._error: 'None|Exception'
+        result: T
         result = self._result[0] if self._result is not None and len(self._result) == 1 else self._result
         return result, self._error
 
