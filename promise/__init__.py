@@ -1,2 +1,2 @@
-from .Promise import Promise
+from .Promise import vPromise
 from .uPromise import uPromise

@@ -1,2 +1,2 @@
-__all__ = ('Promise', 'uPromise')
+__all__ = ('vPromise', 'uPromise')
 from .promise import *
