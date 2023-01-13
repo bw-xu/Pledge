@@ -56,16 +56,26 @@ class Promise(Awaitable[Tuple[T, Exception]]):
             self._state = State.FULLFILLED
         self._result: T = result
         self._loop = None
-        if self.is_settled is not None:
-            self.is_settled.set()
+        self.set_settled()
+
 
     def set_error(self, error):
         if error is not None:
             self._state = State.REJECTED
         self._error: 'Exception|None' = error
         self._loop = None
+        self.set_settled()
+    
+    def set_settled(self):
         if self.is_settled is not None:
             self.is_settled.set()
+        
+        # if a promise have multiple paraent, the story would be different. TODO
+
+        # for promise in self._on_fulfillment:
+        #     promise.set_settled()
+        # for promise in self._on_rejection:
+        #     promise.set_settled()
 
     async def _async_execute(self, *args, **kwargs) -> Tuple[T, 'None|Exception']:
         ''''''
@@ -157,7 +167,7 @@ class Promise(Awaitable[Tuple[T, Exception]]):
 
         return promise
 
-    def then(self, on_fulfillment=None, on_rejection=None) -> 'Promise[T]':
+    def then(self, on_fulfillment=None, on_rejection=None, transitive=False) -> 'Promise[T]':
         return self._then(self, on_fulfillment, on_rejection)
 
     def catch(self, on_rejected):
