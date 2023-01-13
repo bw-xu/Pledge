@@ -3,16 +3,10 @@ import inspect
 from copy import copy
 from typing import TypeVar, Awaitable, Type, List, Iterable, Any, Tuple, Callable
 
-from asyncio import Event as _vEvent
 from ...Offline.Event import Event as uEvent
-from ...Online.LoopOnline import LoopOnline as vLoop, Task as vTask
+from ...Online.LoopOnline import LoopOnline as vLoop, Task as vTask, Event as vEvent
 from ...Offline.LoopOffline import LoopOffline as uLoop, Task as uTask
 from .state import State
-
-
-class vEvent(_vEvent):
-    def __init__(self, loop=None) -> None:
-        super().__init__()
 
 
 class AggregateError(RuntimeError):
@@ -35,9 +29,9 @@ class Promise(Awaitable[Tuple[T, Exception]]):
     ''''''
     Task: 'Type[vTask]|Type[uTask]' = None
     Event: 'Type[vEvent]|Type[uEvent]' = None
-    __loop: 'vLoop|uLoop' = None
+    loop__: 'vLoop|uLoop' = None
 
-    def __init__(self, func: Callable[[Any], T] = None, task: Task = None, loop: 'uLoop|vLoop' = __loop, data: T = None):
+    def __init__(self, func: Callable[[Any], T] = None, task: Task = None, loop: 'uLoop|vLoop' = None, data: T = None):
 
         self.data = data
 
@@ -54,7 +48,8 @@ class Promise(Awaitable[Tuple[T, Exception]]):
         self.is_handling = False
         self.is_settled = None
 
-        self._loop: 'vLoop|uLoop' = loop
+        self._loop: 'vLoop|uLoop' = loop if loop is not None else self.loop__
+        pass
 
     def set_result(self, result: T):
         if result is not None:
@@ -188,7 +183,7 @@ class Promise(Awaitable[Tuple[T, Exception]]):
             return self._state is State.REJECTED
 
     @classmethod
-    def resolve(cls, value, loop: 'vLoop|uLoop' = __loop) -> 'Promise[T]':
+    def resolve(cls, value, loop: 'vLoop|uLoop' = loop__) -> 'Promise[T]':
         ''''''
         promise = None
         if isinstance(value, cls):
@@ -207,14 +202,14 @@ class Promise(Awaitable[Tuple[T, Exception]]):
         return promise
 
     @classmethod
-    def reject(cls, reason, loop: 'vLoop|uLoop' = __loop) -> 'Promise[T]':
+    def reject(cls, reason, loop: 'vLoop|uLoop' = loop__) -> 'Promise[T]':
         ''''''
         promise = cls(loop=loop)
         promise._reject(reason)
         return promise
 
     @classmethod
-    def all(cls, promises, loop: 'vLoop|uLoop' = __loop) -> 'Promise[T]':
+    def all(cls, promises, loop: 'vLoop|uLoop' = loop__) -> 'Promise[T]':
         ''''''
         promise = cls(loop=loop)
         total = len(promises)
@@ -250,7 +245,7 @@ class Promise(Awaitable[Tuple[T, Exception]]):
         return promise
 
     @classmethod
-    def all_settled(cls, promises: Iterable['Promise[T]'], loop: 'vLoop|uLoop' = __loop):
+    def all_settled(cls, promises: Iterable['Promise[T]'], loop: 'vLoop|uLoop' = loop__):
         ''''''
         return cls.all([promise.then(
             lambda value: {'status': State.FULLFILLED, 'value': value}).catch(
@@ -258,7 +253,7 @@ class Promise(Awaitable[Tuple[T, Exception]]):
             for promise in promises], loop=loop)
 
     @classmethod
-    def any(cls, promises, loop: 'vLoop|uLoop' = __loop) -> 'Promise[T]':
+    def any(cls, promises, loop: 'vLoop|uLoop' = loop__) -> 'Promise[T]':
         ''''''
         promise = cls(loop=loop)
         errors = []
@@ -286,7 +281,7 @@ class Promise(Awaitable[Tuple[T, Exception]]):
         return promise
 
     @classmethod
-    def race(cls, promises, loop: 'vLoop|uLoop' = __loop) -> 'Promise[T]':
+    def race(cls, promises, loop: 'vLoop|uLoop' = loop__) -> 'Promise[T]':
         ''''''
         promise = cls(loop=loop)
         settled = False

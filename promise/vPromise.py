@@ -1,5 +1,4 @@
-from ...Online.LoopOnline import LoopOnline as Loop, Task
-from asyncio import Event
+from ...Online.LoopOnline import LoopOnline as Loop, Task, Event
 from typing import TypeVar
 from .base import Promise
 
@@ -28,4 +27,4 @@ class vPromise(Promise[T]):
     is_settled: Event
     Task = Task
     Event = Event
-    __loop = _loop
+    loop__ = _loop

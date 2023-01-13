@@ -22,4 +22,4 @@ class uPromise(Promise[T]):
     is_settled: Event
     Task = Task
     Event = Event
-    __loop = _loop
+    loop__ = _loop
