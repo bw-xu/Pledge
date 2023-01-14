@@ -133,7 +133,7 @@ class Promise(Awaitable[Tuple[T, Exception]]):
         for promise in _on_rejection:
             promise.apply(error)
 
-    def apply(self, *args, **kwargs):
+    def apply(self, *args, **kwargs) -> 'Promise[T]':
         if self._result is not None:
             self._fulfill(*self._result)
         elif self._error is not None:
@@ -143,6 +143,7 @@ class Promise(Awaitable[Tuple[T, Exception]]):
                 self._loop.async_call(self._async_execute, *args, **kwargs)
             elif callable(self._func):
                 self._execute(*args, **kwargs)
+        return self
 
     @classmethod
     def _then(cls, self: 'Promise[T]', on_fulfillment=None, on_rejection=None) -> 'Promise[T]':
