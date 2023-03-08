@@ -7,6 +7,7 @@ from ...Offline.Event import Event as uEvent
 from ...Online.LoopOnline import LoopOnline as vLoop, Task as vTask, Event as vEvent
 from ...Offline.LoopOffline import LoopOffline as uLoop, Task as uTask
 from .state import State
+from collections import deque
 
 
 class AggregateError(RuntimeError):
@@ -47,6 +48,7 @@ class Promise(Awaitable[Tuple[T, Exception]]):
 
         self.is_handling = False
         self.is_settled = None
+        self._parents = set()
 
         self._loop: 'vLoop|uLoop' = loop if loop is not None else self.loop__
         pass
@@ -55,7 +57,7 @@ class Promise(Awaitable[Tuple[T, Exception]]):
         if result is not None:
             self._state = State.FULLFILLED
         self._result: T = result
-        self._loop = None
+        # self._loop = None
         self.set_settled()
 
 
@@ -63,7 +65,7 @@ class Promise(Awaitable[Tuple[T, Exception]]):
         if error is not None:
             self._state = State.REJECTED
         self._error: 'Exception|None' = error
-        self._loop = None
+        # self._loop = None
         self.set_settled()
     
     def set_settled(self):
@@ -155,6 +157,7 @@ class Promise(Awaitable[Tuple[T, Exception]]):
             else:
                 promise = on_rejection
             self._on_rejection.append(promise)
+            promise._parents.add(self)
             if self._state.rejected:
                 self._reject(self._error)
         if on_fulfillment is not None:
@@ -163,6 +166,7 @@ class Promise(Awaitable[Tuple[T, Exception]]):
             else:
                 promise = on_fulfillment
             self._on_fulfillment.append(promise)
+            promise._parents.add(self)
             if self._state.fullfilled:
                 self._fulfill(*self._result)
 
@@ -319,10 +323,30 @@ class Promise(Awaitable[Tuple[T, Exception]]):
 
     def __await__(self):
         ''''''
-        if self._result is not None:
-            return self._result, self._error
+
         if self.is_settled is None:
             self.is_settled = self.Event(loop=self._loop.loop)
+
+            # if len(self._parents) > 0:
+            #     stack = deque()
+            #     handled = set()
+            #     stack.extend(parent for parent in self._parents if parent not in handled)
+            #     while len(stack) > 0: # traverse the ancestors
+            #         promise: Promise = stack.pop()
+            #         if promise not in handled: handled.add(promise)
+            #         stack.extend(parent for parent in promise._parents if parent not in handled)
+
+            #     for promise in handled:
+            #         promise: Promise
+            #         if promise.is_settled is None:
+            #             promise.is_settled = promise.Event(loop=promise._loop.loop)
+            #         if self._result is not None or self._error is not None:
+            #             promise.is_settled.set()
+        if self._result is not None or self._error is not None:
+            self.is_settled.set()
+            result = self._result[0] if self._result is not None and len(
+            self._result) == 1 else self._result
+            return result, self._error
 
         yield from self.is_settled.wait().__await__()
         result: T
