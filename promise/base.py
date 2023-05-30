@@ -198,8 +198,9 @@ class Promise(Awaitable[Tuple[T, Exception]]):
             return self._state is State.REJECTED
 
     @classmethod
-    def resolve(cls, value, loop: 'vLoop|uLoop' = loop__) -> 'Promise[T]':
+    def resolve(cls, value, loop: 'vLoop|uLoop'=None) -> 'Promise[T]':
         ''''''
+        if loop is None: loop = cls.loop__
         promise = None
         if isinstance(value, cls):
             promise = cls(loop=loop)
@@ -217,15 +218,17 @@ class Promise(Awaitable[Tuple[T, Exception]]):
         return promise
 
     @classmethod
-    def reject(cls, reason, loop: 'vLoop|uLoop' = loop__) -> 'Promise[T]':
+    def reject(cls, reason, loop: 'vLoop|uLoop'=None) -> 'Promise[T]':
         ''''''
+        if loop is None: loop = cls.loop__
         promise = cls(loop=loop)
         promise._reject(reason)
         return promise
 
     @classmethod
-    def all(cls, promises, loop: 'vLoop|uLoop' = loop__) -> 'Promise[T]':
+    def all(cls, promises, loop: 'vLoop|uLoop'=None) -> 'Promise[T]':
         ''''''
+        if loop is None: loop = cls.loop__
         promise = cls(loop=loop)
         total = len(promises)
         cnt_fulfilled = 0
@@ -260,16 +263,18 @@ class Promise(Awaitable[Tuple[T, Exception]]):
         return promise
 
     @classmethod
-    def all_settled(cls, promises: Iterable['Promise[T]'], loop: 'vLoop|uLoop' = loop__):
+    def all_settled(cls, promises: Iterable['Promise[T]'], loop: 'vLoop|uLoop'=None):
         ''''''
+        if loop is None: loop = cls.loop__
         return cls.all([promise.then(
             lambda value: {'status': State.FULLFILLED, 'value': value}).catch(
                 lambda reason: {'status': State.REJECTED, 'reason': reason})
             for promise in promises], loop=loop)
 
     @classmethod
-    def any(cls, promises, loop: 'vLoop|uLoop' = loop__) -> 'Promise[T]':
+    def any(cls, promises, loop: 'vLoop|uLoop'=None) -> 'Promise[T]':
         ''''''
+        if loop is None: loop = cls.loop__
         promise = cls(loop=loop)
         errors = []
         total = len(promises)
@@ -296,8 +301,9 @@ class Promise(Awaitable[Tuple[T, Exception]]):
         return promise
 
     @classmethod
-    def race(cls, promises, loop: 'vLoop|uLoop' = loop__) -> 'Promise[T]':
+    def race(cls, promises, loop: 'vLoop|uLoop'=None) -> 'Promise[T]':
         ''''''
+        if loop is None: loop = cls.loop__
         promise = cls(loop=loop)
         settled = False
 
